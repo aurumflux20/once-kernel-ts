@@ -1,0 +1,59 @@
+{
+  "name": "once-kernel",
+  "version": "0.1.0",
+  "description": "Idempotency kernel for side-effecting operations. 1,000 racing callers, exactly one execution — proven, not asserted.",
+  "keywords": [
+    "idempotency",
+    "idempotent",
+    "exactly-once",
+    "deduplication",
+    "retry",
+    "side-effects",
+    "agent",
+    "mcp",
+    "sqlite"
+  ],
+  "license": "Apache-2.0",
+  "author": "A. Kaur (AurumFlux)",
+  "homepage": "https://github.com/aurumflux20/once-kernel-ts#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aurumflux20/once-kernel-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aurumflux20/once-kernel-ts/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/kernel.d.ts",
+      "default": "./dist/kernel.js"
+    },
+    "./sqlite": {
+      "types": "./dist/stores/sqlite.d.ts",
+      "default": "./dist/stores/sqlite.js"
+    }
+  },
+  "main": "./dist/kernel.js",
+  "types": "./dist/kernel.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "test": "node --experimental-strip-types --no-warnings --test test/canonical.test.ts test/kernel.test.ts test/store-conformance.test.ts",
+    "test:storm": "node --experimental-strip-types --no-warnings --test test/storm.test.ts",
+    "test:all": "npm run test && npm run test:storm",
+    "prepublishOnly": "npm run clean && npm run build && npm run test:all"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.7.0"
+  }
+}

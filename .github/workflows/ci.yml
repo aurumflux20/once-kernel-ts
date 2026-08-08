@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: tests + typecheck (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.x", "24.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - name: Typecheck (strict)
+        run: npx tsc -p tsconfig.json
+      - name: Build
+        run: npm run build
+      - name: Unit + store conformance
+        run: npm test
+
+  storm:
+    name: 1000 racers must elect exactly one execution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+      - run: npm ci
+      # A fresh runner every time, no cache to fool. This is the claim the
+      # package is named for; if it fails, nothing ships.
+      - name: Storm proof (x3, cold)
+        run: |
+          set -e
+          for i in 1 2 3; do
+            echo "--- storm run $i ---"
+            npm run test:storm
+          done
+
+  cross-language:
+    name: hashes must match the Python kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22.x" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: npm ci
+      - name: Regenerate vectors from the Python implementation
+        run: |
+          pip install --quiet once-kernel
+          python test/vectors/generate-from-python.py > /tmp/fresh-vectors.json
+      # If the committed vectors ever drift from what Python actually produces,
+      # this fails — so the test cannot quietly agree with itself.
+      - name: Committed vectors must match freshly generated ones
+        run: |
+          python - <<'PY'
+          import json,sys
+          a=json.load(open("test/vectors/python-jcs-vectors.json"))
+          b=json.load(open("/tmp/fresh-vectors.json"))
+          if a!=b:
+              print("committed vectors differ from live Python output"); sys.exit(1)
+          print(f"{len(a)} vectors match the live Python kernel")
+          PY
+      - run: npm test
