@@ -1,10 +1,33 @@
 # once-kernel
 
-**Idempotency for side effects that cost money. 1,000 racing callers, exactly one execution — proven on every commit, not asserted in a README.**
+**Stop side effects happening twice — and find the ones that already did.**
 
 ```bash
 npm install once-kernel
 ```
+
+Zero runtime dependencies. No build step. Node 22.5+.
+
+---
+
+## The problem
+
+An agent retries a call after a timeout. It doesn't know whether the first
+attempt landed — the request reached the server, the work happened, the response
+never came back.
+
+Nothing failed loudly. It succeeded twice.
+
+That's the easy half. The hard half is the worker that dies **between** reserving
+a key and finishing the effect. An in-memory `Set` leaves that key claimed
+forever and the effect never runs at all. Restart the process and the `Set` is
+empty, so it runs twice.
+
+---
+
+## Four things this does
+
+### 1. Run something exactly once
 
 ```ts
 import { Once } from "once-kernel";
@@ -12,74 +35,145 @@ import { SqliteStore } from "once-kernel/sqlite";
 
 const once = new Once({ store: new SqliteStore({ path: "./once.db" }) });
 
-// Called once, twice, or by fifty racing workers — the card is charged once.
 const receipt = await once.run(
-  `charge:${orderId}`,        // the key
-  { amount: 4900, currency: "usd" },  // the payload — part of the identity
+  `charge:${orderId}`,                  // the key
+  { amount: 4900, currency: "usd" },    // the payload is part of the identity
   () => stripe.charges.create({ amount: 4900, currency: "usd" }),
 );
 ```
 
-Every caller gets the same `receipt`. The charge happens once.
+Fifty racing callers, one charge. Every caller gets the same `receipt`.
+
+### 2. Ask whether something already happened — without doing it
+
+```ts
+const { state } = await once.status(`refund:${orderId}`);
+// "completed" | "failed" | "in_progress" | "unknown"
+```
+
+"Did we already refund order 4471?" is a question ops asks daily. Until now the
+only way to answer it was to attempt the refund.
+
+`"unknown"` means *no record*, which is **not** the same as "it didn't happen" —
+records expire, and operations can predate the fence. Saying "no" there would be
+a lie somebody refunds a customer twice on.
+
+### 3. Prove what ran
+
+```ts
+const r = await once.receipt(`charge:${orderId}`);
+// { status, payloadHash, generation, firstSeenAt, settledAt, result }
+```
+
+`payloadHash` is a SHA-256 of the canonical payload, so a receipt proves **what**
+ran, not merely that something did. `generation > 1` means a worker died
+mid-flight and another took over — the visible trace of a crash you'd otherwise
+never see.
+
+For regulated or payments work, evidence is usually worth more than prevention.
+
+### 4. Find duplicates that already happened
+
+No adoption required. Point it at records you already have.
+
+```ts
+import { findDuplicates, formatAuditReport } from "once-kernel/audit";
+
+const report = findDuplicates(
+  rows.map((r) => ({
+    id: r.id,
+    at: r.created_at,
+    subject: { customer: r.customer_id, amount: r.amount },  // what was DONE
+    amount: r.amount,
+    key: r.idempotency_key,   // if the system had one
+  })),
+);
+
+console.log(formatAuditReport(report));
+```
+
+```
+Examined 12,480 records.
+Found 3 duplicate occurrence(s) across 2 group(s), worth 348 in repeated effects.
+
+[high] 1 extra  (49) — same-key
+  The system's own idempotency key "idem_88f2" appears on 2 separate effects.
+  ids: ch_4471, ch_4472
+```
+
+**`subject` is the whole game.** It should contain what makes two operations
+*different* and nothing that varies between attempts of the same one — no
+timestamps, no trace ids, no retry counters. Leave something out and unrelated
+operations look identical; leave something varying in and real duplicates hide.
+
+Results carry a confidence and the reason they were flagged. A monthly
+subscription looks exactly like a duplicate, so spread-out repeats are reported
+at **low** confidence and clearly labelled, rather than sent to someone as a
+finding.
 
 ---
 
-## Why this exists
+## Also included
 
-The bug is not two simultaneous calls. That one is easy and everybody's in-memory
-`Set` handles it.
+### Warn before an unguarded effect
 
-The bug is the worker that dies **between** reserving the key and finishing the
-effect. A `Set` leaves that key claimed forever and the effect never runs at all.
-Or the process restarts, the `Set` is empty, and the effect runs twice.
+```ts
+import { guardEffect } from "once-kernel/guard";
 
-Retries are the other half. An agent whose request times out will re-send it. The
-server already did the work; the response just never arrived. Nothing failed
-loudly — it succeeded twice.
+guardEffect({
+  what: "charge card",
+  reversibility: "irreversible",
+  idempotencyKey: paymentId,          // undefined is the case that warns
+  endpointDeduplicates: "unknown",    // has the endpoint SAID it dedupes?
+});
+```
 
-`once` handles both: a durable record, a lease that expires if you crash, and a
-fence token so the worker that stalled cannot overwrite the one that replaced it.
+Warns when you're about to cause something irreversible with no dedup key
+against an endpoint that has never claimed to deduplicate. It **does not block
+the call** — a library that silently blocked effects would get ripped out. It
+raises a flag at the moment a supervisor wants one.
+
+### Cap what can be spent
+
+```ts
+import { SpendLimiter } from "once-kernel/budget";
+
+const budget = new SpendLimiter({ limit: 500, windowMs: 24 * 60 * 60 * 1000 });
+await budget.run({ what: "pay supplier", amount: 49 }, () => pay(49));
+```
+
+The failure this catches isn't a duplicate — it's an agent doing something
+individually reasonable, repeatedly, until the money is gone. Headroom is
+**reserved before the call** and settled after, because checking a running total
+afterwards is a race where ten concurrent calls all see room and all proceed.
+
+---
 
 ## What it guarantees
 
-- **Exactly one execution per key.** Verified by 1,000 racers across real OS
-  threads, released simultaneously by an `Atomics` barrier, against one shared
-  database. The execution count is read from a *separate table*, not
-  self-reported. Ten cold runs, ten times one execution.
-- **Every caller gets the winner's result** — not an error, not `undefined`.
-- **A crash cannot strand a key.** The lease expires and the work proceeds, with
-  the `generation` counter advancing so downstream systems can fence the dead worker.
+- **Exactly one execution per key.** 1,000 racers across real OS threads,
+  released simultaneously by an `Atomics` barrier, against one shared database.
+  The count is read from a *separate table*, not self-reported. Ten cold runs,
+  ten times one execution — and it runs on every commit in CI.
+- **Every caller gets the winner's result.** Not an error, not `undefined`.
+- **A crash cannot strand a key.** The lease expires, work proceeds, and
+  `generation` advances so downstream systems can fence the dead worker.
 - **Same key + different payload is a conflict, not a dedupe.** Guessing which
   body wins is how money moves twice.
-- **Key order in your JSON is irrelevant.** `{a,b}` and `{b,a}` are one operation —
-  which matters when an LLM reformats its arguments between retries.
+- **Key order in your JSON is irrelevant.** `{a,b}` and `{b,a}` are one
+  operation — which matters when an LLM reformats its arguments between retries.
 
-## What it does *not* do
+## What it does not do
 
-- It cannot make a non-idempotent remote API idempotent. If your provider charges
-  twice for two distinct requests, `once` stops the second request from being
-  *sent* — it cannot un-charge one that was.
-- The default `MemoryStore` is single-process and dies with your program. That is
-  fine for tests and wrong for production. Use `SqliteStore`, or implement the
-  four-method `Store` interface against Postgres.
-- It is not a queue, a scheduler, or a retry library.
+- It cannot make a non-idempotent remote API idempotent. It stops the second
+  request being *sent*; it cannot un-charge one that was.
+- Not exactly-once *delivery*. That's physically impossible and anyone claiming
+  it is selling you something. This is exactly-once **execution**.
+- The default `MemoryStore` is single-process and dies with your program — fine
+  for tests, wrong for production. Use `SqliteStore`.
+- Not a queue, a scheduler, or a retry library.
 
-## Cross-language compatibility
-
-This is a port of [`once-kernel` on PyPI](https://pypi.org/project/once-kernel/),
-and it hashes payloads **identically**: both use RFC 8785 (JSON Canonicalization
-Scheme). A Python service and a Node service can key the same operation and agree
-about whether it already ran.
-
-That claim is tested, not hoped for — `test/vectors/python-jcs-vectors.json` is
-*generated by the Python implementation* and asserted against on every commit.
-Hand-written expectations would only prove this file agrees with itself.
-
-### Large integers
-
-JavaScript has one number type. By the time `once` sees `1234567890123456789`,
-the parser has already rounded it to `1234567890123456800` — the precision is
-gone before this library is called. **Pass large identifiers as strings.**
+---
 
 ## API
 
@@ -87,18 +181,20 @@ gone before this library is called. **Pass large identifiers as strings.**
 const once = new Once({
   store,                 // default: MemoryStore
   defaultTtlSec,         // how long a completed record is remembered
-  defaultLeaseSec = 30,  // how long before a crashed worker's key is reclaimed
+  defaultLeaseSec = 30,  // before a crashed worker's key is reclaimed
   maxResultBytes = 65536,
 });
 
 await once.run(key, payload, fn, { ttlSec, leaseSec, waitTimeoutMs, pollMs });
+await once.status(key);
+await once.receipt(key);
 ```
 
-Lower-level, if you need to control the boundary yourself:
+Lower level, if you need the boundary yourself:
 
 ```ts
 const { execute, record } = await once.begin(key, payload);
-if (!execute) return record.result;      // someone else already did it
+if (!execute) return record.result;          // someone else already did it
 try {
   const result = await doTheThing();
   await once.complete(key, record.fenceToken, result);
@@ -115,39 +211,61 @@ worker that wakes up after losing its lease gets `false` and changes nothing.
 
 | Error | Meaning |
 |---|---|
-| `IdempotencyConflict` | Same key, different payload. A caller bug — do not retry blindly. |
-| `InProgressError` | Another caller holds the key right now. `run()` waits for you. |
+| `IdempotencyConflict` | Same key, different payload. A caller bug — don't retry blindly. |
+| `InProgressError` | Another caller holds the key. `run()` waits for you. |
 | `WaitTimeout` | Waited past `waitTimeoutMs` for an in-flight call to settle. |
-| `ResultTooLarge` | Result exceeds `maxResultBytes`. Store it elsewhere, keep a reference. |
-| `CanonicalizationError` | Payload contains something JSON cannot represent (`NaN`, `undefined`, `Date`, `BigInt`). Rejected rather than silently coerced — coercion is how two payloads collide into one hash. |
+| `ResultTooLarge` | Over `maxResultBytes`. Store it elsewhere, keep a reference. |
+| `CanonicalizationError` | Payload holds something JSON can't represent (`NaN`, `undefined`, `Date`, `BigInt`). Rejected rather than coerced — coercion is how two payloads collide into one hash. |
+| `BudgetExceeded` | The spend ceiling refused the call. Says what, how much, and when it frees up. |
+
+### Entry points
+
+| Import | For |
+|---|---|
+| `once-kernel` | `Once`, errors, `MemoryStore` |
+| `once-kernel/sqlite` | `SqliteStore` — durable, use this in production |
+| `once-kernel/audit` | `findDuplicates`, `formatAuditReport` |
+| `once-kernel/budget` | `SpendLimiter` |
+| `once-kernel/guard` | `guardEffect`, `withGuard` |
 
 ## Storage
 
-`SqliteStore` uses Node's built-in `node:sqlite`. **This package has zero runtime
-dependencies.**
+`SqliteStore` uses Node's built-in `node:sqlite`. Every mutation is a single SQL
+statement with its guard in the `WHERE` clause, so two processes racing the same
+key resolve inside the database engine — reading then writing in JavaScript
+would be the exact time-of-check-to-time-of-use race this library exists to
+prevent.
 
-Every mutation is a single SQL statement with its guard in the `WHERE` clause, so
-two processes racing the same key resolve inside the database engine. Reading and
-then writing in JavaScript would be a time-of-check-to-time-of-use race — exactly
-the bug this library exists to prevent.
-
-To use Postgres or Redis, implement `Store`: `get`, `createInProgress`,
+For Postgres or Redis, implement `Store`: `get`, `createInProgress`,
 `casComplete`, `casFail`, `reclaimIfLeaseDead`, `heartbeat`. Run
-`test/store-conformance.test.ts` against it; that suite is the contract.
+`test/store-conformance.test.ts` against it — that suite *is* the contract.
 
-## Requirements
+## Cross-language
 
-Node 22.5+ (for `node:sqlite`). No build step, no native modules, no dependencies.
+A port of [`once-kernel` on PyPI](https://pypi.org/project/once-kernel/), hashing
+payloads **identically** via RFC 8785. A Python service and a Node service can
+key the same operation and agree about whether it already ran.
+
+Tested, not hoped for: `test/vectors/python-jcs-vectors.json` is *generated by
+the Python implementation* and asserted against on every commit. Hand-written
+expectations would only prove this file agrees with itself.
+
+**Large integers:** JavaScript has one number type, and by the time `once` sees
+`1234567890123456789` the parser has already rounded it. Pass large identifiers
+as strings.
+
+## Related
+
+[`fencescan`](https://www.npmjs.com/package/fencescan) — `npx fencescan` finds
+tool calls in a codebase that could fire twice.
+[`effectfence`](https://github.com/aurumflux20/effectfence) — the same guarantee
+as an MCP server.
 
 ## Commercial support
 
-This stays free and Apache-2.0 licensed. If you want help applying it to a
-codebase that already moves money — every side-effecting path inventoried,
-storm-tested, and fenced with a CI test that keeps it that way — email
-**hello@aurumflux.co**. Details:
+Free and Apache-2.0, staying that way. If you want help applying it to a codebase
+that already moves money, email **hello@aurumflux.co** —
 [the Fence Audit](https://github.com/aurumflux20/effectfence/blob/main/SUPPORT.md).
-
-If it isn't a fit we'll tell you that instead.
 
 ## Licence
 

@@ -1,7 +1,7 @@
 {
   "name": "once-kernel",
-  "version": "0.1.0",
-  "description": "Idempotency kernel for side-effecting operations. 1,000 racing callers, exactly one execution — proven, not asserted.",
+  "version": "0.2.0",
+  "description": "Idempotency kernel for side-effecting operations. 1,000 racing callers, exactly one execution \u2014 proven, not asserted.",
   "keywords": [
     "idempotency",
     "idempotent",
@@ -35,6 +35,18 @@
     "./sqlite": {
       "types": "./dist/stores/sqlite.d.ts",
       "default": "./dist/stores/sqlite.js"
+    },
+    "./guard": {
+      "types": "./dist/guard.d.ts",
+      "default": "./dist/guard.js"
+    },
+    "./audit": {
+      "types": "./dist/audit.d.ts",
+      "default": "./dist/audit.js"
+    },
+    "./budget": {
+      "types": "./dist/budget.d.ts",
+      "default": "./dist/budget.js"
     }
   },
   "main": "./dist/kernel.js",
@@ -47,7 +59,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
-    "test": "node --experimental-strip-types --no-warnings --test test/canonical.test.ts test/kernel.test.ts test/store-conformance.test.ts",
+    "test": "node --experimental-strip-types --no-warnings --test test/canonical.test.ts test/kernel.test.ts test/store-conformance.test.ts test/guard.test.ts test/capabilities.test.ts test/readme.test.ts",
     "test:storm": "node --experimental-strip-types --no-warnings --test test/storm.test.ts",
     "test:all": "npm run test && npm run test:storm",
     "prepublishOnly": "npm run clean && npm run build && npm run test:all"

@@ -106,6 +106,20 @@ export function normalizeKey(key: string): string {
   return v;
 }
 
+/** Evidence that an operation ran, and what it ran on. */
+export interface Receipt {
+  key: string;
+  status: Status;
+  /** SHA-256 of the RFC 8785 canonical payload — proves WHAT ran. */
+  payloadHash: string;
+  /** 1 normally. Higher means a worker died mid-flight and another took over. */
+  generation: number;
+  firstSeenAt: string;
+  settledAt: string;
+  result?: unknown;
+  error?: string;
+}
+
 export interface Outcome {
   /** True for exactly one caller: the one that must run the effect. */
   execute: boolean;
@@ -299,6 +313,51 @@ export class Once {
 
   async fail(key: string, fenceToken: string, error: string, allowRetry = true): Promise<boolean> {
     return this.store.casFail(normalizeKey(key), fenceToken, error, allowRetry);
+  }
+
+  /**
+   * Has this operation already happened? Answers WITHOUT running anything.
+   *
+   * Until now the only way to find out was to attempt the operation, which is
+   * useless during reconciliation: "did we already refund order 4471?" is a
+   * question ops and finance ask daily, and attempting a refund to find out is
+   * not an acceptable way to answer it.
+   *
+   * Returns `"unknown"` when there is no record — which is genuinely different
+   * from "it did not happen". A record can expire, or the operation may predate
+   * the fence. Saying "no" there would be a lie.
+   */
+  async status(
+    key: string,
+  ): Promise<{ state: "completed" | "failed" | "in_progress" | "unknown"; record?: Record_ }> {
+    const rec = await this.store.get(normalizeKey(key));
+    if (!rec) return { state: "unknown" };
+    return { state: rec.status, record: rec };
+  }
+
+  /**
+   * A receipt proving what happened for this key, or null if nothing is known.
+   *
+   * For anyone in payments or regulated work, evidence is worth more than
+   * prevention: "show me this refund was issued exactly once" is an audit
+   * question with money attached to the answer. The payload hash makes the
+   * receipt content-addressed — you can prove WHAT ran, not merely that
+   * something did.
+   */
+  async receipt(key: string): Promise<Receipt | null> {
+    const rec = await this.store.get(normalizeKey(key));
+    if (!rec) return null;
+    return {
+      key: rec.key,
+      status: rec.status,
+      payloadHash: rec.payloadHash,
+      /** Increments on every reclaim; >1 means a worker died and was replaced. */
+      generation: rec.generation,
+      firstSeenAt: new Date(rec.createdAt * 1000).toISOString(),
+      settledAt: new Date(rec.updatedAt * 1000).toISOString(),
+      result: rec.result,
+      error: rec.error,
+    };
   }
 
   /**
