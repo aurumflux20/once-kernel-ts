@@ -139,6 +139,16 @@ To use Postgres or Redis, implement `Store`: `get`, `createInProgress`,
 
 Node 22.5+ (for `node:sqlite`). No build step, no native modules, no dependencies.
 
+## Commercial support
+
+This stays free and Apache-2.0 licensed. If you want help applying it to a
+codebase that already moves money — every side-effecting path inventoried,
+storm-tested, and fenced with a CI test that keeps it that way — email
+**hello@aurumflux.co**. Details:
+[the Fence Audit](https://github.com/aurumflux20/effectfence/blob/main/SUPPORT.md).
+
+If it isn't a fit we'll tell you that instead.
+
 ## Licence
 
 Apache-2.0
