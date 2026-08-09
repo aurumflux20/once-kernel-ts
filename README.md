@@ -106,6 +106,24 @@ Found 3 duplicate occurrence(s) across 2 group(s), worth 348 in repeated effects
 timestamps, no trace ids, no retry counters. Leave something out and unrelated
 operations look identical; leave something varying in and real duplicates hide.
 
+**No code at all, if you'd rather not write any:**
+
+```bash
+npx once-kernel-audit payments.json --at=created_at --subject=customer,plan --amount=amount --key=idem_key
+```
+
+Same function, run against a JSON export straight from your terminal — a
+payments table dumped to JSON, a send log, anything with records in it.
+JSON and JSONL only, deliberately: a CSV parser has quoting and encoding
+edge cases that are easy to get subtly wrong, and a silent misparse here is
+the worst possible failure mode for a tool whose whole job is finding money
+that moved twice. Export to JSON first.
+
+`--at` and `--subject` are required and never guessed — auto-detecting which
+fields mean "the same operation" would be guessing at the one judgment call
+this tool exists to get right. Run `npx once-kernel-audit --help` for the
+full flag reference, or see `bin/once-audit.js`.
+
 Results carry a confidence and the reason they were flagged. A monthly
 subscription looks exactly like a duplicate, so spread-out repeats are reported
 at **low** confidence and clearly labelled, rather than sent to someone as a

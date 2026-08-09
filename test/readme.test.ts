@@ -7,9 +7,11 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 import { Once } from "../src/kernel.ts";
 import { SqliteStore } from "../src/stores/sqlite.ts";
@@ -89,6 +91,30 @@ test("README §4 — the audit example runs and formats", () => {
   assert.match(text, /\[high\]/);
   assert.match(text, /same-key/);
   assert.match(text, /ch_4471, ch_4472/);
+});
+
+test("README §4b — the CLI example runs, from the shell, no imports", () => {
+  const dir = mkdtempSync(join(tmpdir(), "once-readme-cli-"));
+  try {
+    const file = join(dir, "payments.json");
+    writeFileSync(
+      file,
+      JSON.stringify([
+        { id: "ch_4471", created_at: "2026-03-01T10:00:00Z", customer: "c1", plan: "pro", amount: 49, idem_key: "idem_88f2" },
+        { id: "ch_4472", created_at: "2026-03-01T10:00:12Z", customer: "c1", plan: "pro", amount: 49, idem_key: "idem_88f2" },
+      ]),
+    );
+    const bin = fileURLToPath(new URL("../bin/once-audit.js", import.meta.url));
+    const out = execFileSync(
+      process.execPath,
+      [bin, file, "--at=created_at", "--subject=customer,plan", "--amount=amount", "--key=idem_key"],
+      { encoding: "utf8" },
+    );
+    assert.match(out, /Examined 2 records/);
+    assert.match(out, /\[high\]/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("README — the guard example runs", () => {
