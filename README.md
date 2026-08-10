@@ -133,6 +133,36 @@ finding.
 
 ## Also included
 
+### One Door — three checks, one atomic gate
+
+Every irreversible action passes a single gate that answers three questions
+before anything fires: **did this already happen? is there budget left? may
+it run without a human?** A rate limiter can't deduplicate, an idempotency
+layer can't budget, a policy engine can't do either atomically — One Door
+composes all three at the same choke point, and a replay never consumes
+budget.
+
+```ts
+import { OneDoor, AllowList } from "once-kernel/door";
+import { SpendLimiter } from "once-kernel/budget";
+
+const door = new OneDoor({
+  budget: new SpendLimiter({ limit: 50, windowMs: 86_400_000 }), // $50/day
+  policy: new AllowList(["send_email", "create_invoice"]),
+});
+
+const out = await door.pass(
+  { key: `invoice:${orderId}`, payload: order, amount: 12.5, tool: "create_invoice" },
+  () => stripe.invoices.create(...),
+);
+// out.passed === true  → ran exactly once (or replayed with the same result)
+// out.passed === false → out.reason: "not_cleared" | "over_budget" | "conflict"
+```
+
+Refusals are values, not exceptions — an agent reads the reason and chooses
+its next move. Storm-tested: 50 concurrent passes, one execution, budget
+charged once.
+
 ### Warn before an unguarded effect
 
 ```ts
