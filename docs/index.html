@@ -79,6 +79,8 @@
 
   <p>The mechanism is a compare-and-swap on a fence token. One caller claims the key, everyone else finds it claimed. The winner records the result; the losers read it. There is no window between "check" and "act" for a second caller to slip through — which is the entire bug.</p>
 
+  <p class="dimtext"><strong>About the unfenced number.</strong> "Have we charged this already?" is normally a read against a flag that only gets written <em>after</em> the charge succeeds. Everyone who arrives inside that window sees "not yet" and charges. The button models a 50&nbsp;ms write against callers arriving over roughly 100&nbsp;ms — so about half land first. Widen the burst or slow the write and the number climbs; the shape doesn't change. Our own production version of this was smaller and just as real: one recipient got three identical emails from a deploy race.</p>
+
   <div class="note">
     <strong>What this page is, precisely.</strong> This is the real admission algorithm running in your browser, not a video. It is <em>not</em> the production proof — that lives in CI, where 1,000 racers across real OS threads, released by an <code>Atomics</code> barrier, elect exactly one execution on every commit. This page shows you the mechanism; the test suite is what proves it.
   </div>
@@ -155,11 +157,13 @@ await door.pass(
         if (out.execute) { charges++; executed = true; kernel.complete(out.rec, "ch_1"); }
         else replays++;
       } else {
-        // No fence: every caller checks a flag, and the check is not atomic
-        // with the act — so concurrent callers all pass it.
-        if (!naiveDone) { charges++; executed = true; }
-        // flag set only after the "network call" returns — the real gap
-        if (i > 3) naiveDone = true;
+        // No fence: the caller checks a flag that is only written AFTER the
+        // charge succeeds. Everyone arriving inside that window sees
+        // "not charged yet" and charges. WINDOW models a 50ms write against
+        // callers arriving over ~100ms — i.e. half of them land first.
+        const WINDOW = Math.floor(N * 0.5);
+        if (i < WINDOW) { charges++; executed = true; }
+        else naiveDone = true;
       }
       const d = dots[Math.floor(i * DOTS / N)];
       if (d) d.className = "dot " + (executed ? (fenced ? "run" : "dbl") : "replay");
@@ -183,7 +187,7 @@ await door.pass(
       v.textContent = `1,000 attempts → 1 charge. The other 999 replayed the first result.`;
       v.className = "verdict pass";
     } else {
-      v.textContent = `1,000 attempts → ${charges} charges. Every one of them is a real card charge.`;
+      v.textContent = `1,000 attempts → ${charges} charges. Every one is a real card charge.`;
       v.className = "verdict fail";
     }
     $("run").disabled = $("runNaive").disabled = false;
