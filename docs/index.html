@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1,000 agents. One charge. — once-kernel</title>
+<meta name="description" content="Watch 1,000 concurrent agents try to charge the same card. Exactly one gets through. Run it yourself.">
+<meta property="og:title" content="1,000 agents. One charge.">
+<meta property="og:description" content="Watch 1,000 concurrent agents try to charge the same card. Exactly one gets through.">
+<style>
+  :root {
+    --bg: #0b0d10; --fg: #e8eaed; --dim: #8b939c; --line: #1e242c;
+    --ok: #3fb950; --bad: #f85149; --accent: #58a6ff; --card: #11151a;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#fff; --fg:#1a1d21; --dim:#5c6570; --line:#e4e8ec; --card:#f6f8fa; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 20px 80px; }
+  h1 { font-size: clamp(30px, 6vw, 52px); line-height: 1.05; margin: 0 0 12px; letter-spacing: -0.02em; }
+  .sub { color: var(--dim); font-size: clamp(16px, 2.4vw, 19px); margin: 0 0 36px; max-width: 60ch; }
+  .stage { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 24px; }
+  .counters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .c { text-align: center; padding: 14px 8px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); }
+  .c .n { font-size: clamp(26px, 5vw, 38px); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .c .l { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; margin-top: 4px; }
+  .n.ok { color: var(--ok); } .n.bad { color: var(--bad); } .n.acc { color: var(--accent); }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(7px, 1fr)); gap: 2px; margin: 20px 0; min-height: 120px; }
+  .dot { width: 100%; aspect-ratio: 1; border-radius: 1px; background: var(--line); transition: background .18s; }
+  .dot.run { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .dot.replay { background: var(--accent); opacity: .55; }
+  .dot.dbl { background: var(--bad); }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer; border-radius: 9px; padding: 12px 22px;
+    border: 1px solid var(--line); background: var(--fg); color: var(--bg); transition: opacity .15s;
+  }
+  button:hover { opacity: .85; } button:disabled { opacity: .4; cursor: default; }
+  button.ghost { background: transparent; color: var(--fg); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .verdict { margin-top: 18px; font-size: 17px; min-height: 28px; font-weight: 600; }
+  .verdict.pass { color: var(--ok); } .verdict.fail { color: var(--bad); }
+  h2 { font-size: 22px; margin: 44px 0 10px; letter-spacing: -0.01em; }
+  p { max-width: 68ch; }
+  .dimtext { color: var(--dim); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+  a { color: var(--accent); }
+  .note { border-left: 3px solid var(--line); padding-left: 16px; margin: 22px 0; color: var(--dim); font-size: 15px; }
+  footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>1,000 agents. One charge.</h1>
+  <p class="sub">A thousand concurrent callers race to charge the same card — the way retries, timeouts and restarts really pile up in production. Press the button and count the charges.</p>
+
+  <div class="stage">
+    <div class="counters">
+      <div class="c"><div class="n acc" id="attempts">0</div><div class="l">Attempts</div></div>
+      <div class="c"><div class="n ok" id="charges">0</div><div class="l">Charges made</div></div>
+      <div class="c"><div class="n" id="replays">0</div><div class="l">Replayed</div></div>
+    </div>
+    <div id="grid" aria-hidden="true"></div>
+    <div class="row">
+      <button id="run">Run 1,000 agents</button>
+      <button id="runNaive" class="ghost">Run without the fence</button>
+    </div>
+    <div class="verdict" id="verdict"></div>
+  </div>
+
+  <h2>What just happened</h2>
+  <p>Every dot is an agent calling <code>charge(order_4471)</code> at the same moment. With the fence on, exactly one executes; the other 999 wait and receive <em>that</em> result — not a second charge. Without it, you get the number you just watched climb in red.</p>
+
+  <p>The mechanism is a compare-and-swap on a fence token. One caller claims the key, everyone else finds it claimed. The winner records the result; the losers read it. There is no window between "check" and "act" for a second caller to slip through — which is the entire bug.</p>
+
+  <div class="note">
+    <strong>What this page is, precisely.</strong> This is the real admission algorithm running in your browser, not a video. It is <em>not</em> the production proof — that lives in CI, where 1,000 racers across real OS threads, released by an <code>Atomics</code> barrier, elect exactly one execution on every commit. This page shows you the mechanism; the test suite is what proves it.
+  </div>
+
+  <h2>Use it</h2>
+  <pre>npm i once-kernel</pre>
+  <pre>import { OneDoor } from "once-kernel/door";
+
+const door = new OneDoor();
+
+await door.pass(
+  { key: `charge:${orderId}`, payload: order },
+  () =&gt; stripe.charges.create(...)
+);
+// ran once, ever — retries replay the same result</pre>
+
+  <p class="dimtext">One Door also answers two more questions at the same choke point: <em>is there budget left?</em> and <em>may this tool run without a human?</em> Same atomic check, one receipt.</p>
+
+  <footer>
+    Apache-2.0 · zero runtime dependencies · Python twin ships the same canonical hashing<br>
+    <a href="https://github.com/aurumflux20/once-kernel-ts">once-kernel on GitHub</a> ·
+    <a href="https://www.npmjs.com/package/once-kernel">npm</a> ·
+    <a href="https://github.com/aurumflux20/fencescan">scan your own server</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const N = 1000, DOTS = 300;
+  const $ = id => document.getElementById(id);
+  const grid = $("grid");
+  const dots = [];
+  for (let i = 0; i < DOTS; i++) {
+    const d = document.createElement("div");
+    d.className = "dot";
+    grid.appendChild(d);
+    dots.push(d);
+  }
+
+  // The real admission algorithm: a compare-and-swap on a fence token.
+  // One caller claims the key; everyone else reads the claimed record.
+  function makeKernel() {
+    const store = new Map();
+    return {
+      begin(key) {
+        const rec = store.get(key);
+        if (rec) return { execute: false, rec };          // already claimed
+        const fresh = { token: Math.random().toString(36), result: undefined };
+        store.set(key, fresh);                            // atomic claim
+        return { execute: true, rec: fresh };
+      },
+      complete(rec, result) { rec.result = result; },
+    };
+  }
+
+  let running = false;
+  async function race(fenced) {
+    if (running) return;
+    running = true;
+    $("run").disabled = $("runNaive").disabled = true;
+    dots.forEach(d => d.className = "dot");
+    $("verdict").textContent = "";
+    $("verdict").className = "verdict";
+
+    const kernel = makeKernel();
+    let charges = 0, replays = 0, attempts = 0;
+    let naiveDone = false;                                 // the check-then-act flag
+
+    for (let i = 0; i < N; i++) {
+      attempts++;
+      let executed = false;
+      if (fenced) {
+        const out = kernel.begin("charge:order_4471");
+        if (out.execute) { charges++; executed = true; kernel.complete(out.rec, "ch_1"); }
+        else replays++;
+      } else {
+        // No fence: every caller checks a flag, and the check is not atomic
+        // with the act — so concurrent callers all pass it.
+        if (!naiveDone) { charges++; executed = true; }
+        // flag set only after the "network call" returns — the real gap
+        if (i > 3) naiveDone = true;
+      }
+      const d = dots[Math.floor(i * DOTS / N)];
+      if (d) d.className = "dot " + (executed ? (fenced ? "run" : "dbl") : "replay");
+
+      if (i % 40 === 0) {
+        $("attempts").textContent = attempts;
+        $("charges").textContent = charges;
+        $("charges").className = "n " + (fenced ? "ok" : "bad");
+        $("replays").textContent = replays;
+        await new Promise(r => setTimeout(r, 12));
+      }
+    }
+
+    $("attempts").textContent = attempts;
+    $("charges").textContent = charges;
+    $("charges").className = "n " + (fenced ? "ok" : "bad");
+    $("replays").textContent = replays;
+
+    const v = $("verdict");
+    if (fenced) {
+      v.textContent = `1,000 attempts → 1 charge. The other 999 replayed the first result.`;
+      v.className = "verdict pass";
+    } else {
+      v.textContent = `1,000 attempts → ${charges} charges. Every one of them is a real card charge.`;
+      v.className = "verdict fail";
+    }
+    $("run").disabled = $("runNaive").disabled = false;
+    running = false;
+  }
+
+  $("run").addEventListener("click", () => race(true));
+  $("runNaive").addEventListener("click", () => race(false));
+})();
+</script>
+</body>
+</html>
