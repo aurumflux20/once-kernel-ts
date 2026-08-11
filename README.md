@@ -163,6 +163,38 @@ Refusals are values, not exceptions — an agent reads the reason and chooses
 its next move. Storm-tested: 50 concurrent passes, one execution, budget
 charged once.
 
+### Ask the world, and keep the third answer
+
+Your database knows what you did, not what arrived. After a timeout, only the
+provider can say whether the effect exists.
+
+```ts
+import { resendConfirmer, resolveAfterTimeout } from "once-kernel/confirm";
+
+const r = await resolveAfterTimeout({
+  confirmer: resendConfirmer(process.env.RESEND_API_KEY!),
+  ref: storedMessageId,
+});
+
+switch (r.action) {
+  case "replay":   return stored;              // provider has it — never re-run
+  case "execute":  return send();              // provider asked, genuinely absent
+  case "escalate": alertHuman(r.why);          // we could not find out
+}
+```
+
+Three answers, not two. `unknown` — a 500, a timeout, a revoked key — is **not**
+`absent`. Most implementations return a boolean and quietly turn "I could not
+find out" into "it didn't happen", which is the double-charge bug wearing a
+helpful face. Here it escalates instead, because re-running an irreversible
+effect on a guess is the thing we are trying to prevent.
+
+Only 404 means absent. A `bounced` email is **confirmed** — the send happened,
+delivery failed afterwards; re-sending it is a human's decision, not a retry's.
+
+Measured provider behaviour, with claims and measurements kept strictly apart:
+[docs/PROVIDER-ATLAS.md](docs/PROVIDER-ATLAS.md).
+
 ### Notarised receipts — evidence an outsider can check
 
 `receipt()` answers "did this run once?" from your own records. That is worth
