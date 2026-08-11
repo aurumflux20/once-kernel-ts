@@ -163,6 +163,42 @@ Refusals are values, not exceptions — an agent reads the reason and chooses
 its next move. Storm-tested: 50 concurrent passes, one execution, budget
 charged once.
 
+### Notarised receipts — evidence an outsider can check
+
+`receipt()` answers "did this run once?" from your own records. That is worth
+everything to you and nothing to an auditor: a log you keep about yourself is a
+diary entry. `ReceiptLedger` hash-chains those receipts so that editing,
+deleting or reordering any entry breaks every hash after it — tampering becomes
+detectable by arithmetic instead of trust.
+
+```ts
+import { ReceiptLedger, verifyChain, auditKey } from "once-kernel/ledger";
+
+const ledger = ReceiptLedger.fromJSON(await fs.readFile("receipts.json", "utf8"));
+ledger.append({
+  receipt: await once.receipt(`refund:${orderId}`),
+  world: "confirmed",              // a provider was asked and said yes
+  worldRef: paymentIntentId,
+});
+
+verifyChain(ledger.all());          // → { ok: true, entries: 1284 }
+console.log(auditKey(ledger.all(), `refund:${orderId}`));
+// Chain verified: 1284 entries, unbroken.
+// "refund:4471": 1 record(s), 1 completed.
+// Executed once, at 2026-08-11T04:12:09.884Z. Payload hash 9f2a…
+// Confirmed by the provider (pi_3Qx…).
+```
+
+`verifyChain` needs only the entries — no network, no database, not us. Hand the
+file to anyone and they can check it themselves.
+
+**What it does not claim:** a hash chain proves the sequence has not been edited
+since it was written. It does not prove *who* wrote it — an operator holding the
+whole file can rewrite the chain from scratch. Detached signatures are what turn
+self-consistent into third-party attested, and that is a later step. It also
+never conflates `confirmed` (a provider said yes) with `unconfirmed` (nobody
+asked); the audit output says which, every time.
+
 ### Warn before an unguarded effect
 
 ```ts

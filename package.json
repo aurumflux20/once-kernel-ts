@@ -1,6 +1,6 @@
 {
   "name": "once-kernel",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Idempotency kernel for side-effecting operations. 1,000 racing callers, exactly one execution — proven, not asserted.",
   "keywords": [
     "idempotency",
@@ -51,6 +51,10 @@
     "./budget": {
       "types": "./dist/budget.d.ts",
       "default": "./dist/budget.js"
+    },
+    "./ledger": {
+      "types": "./dist/ledger.d.ts",
+      "default": "./dist/ledger.js"
     }
   },
   "main": "./dist/kernel.js",
@@ -64,7 +68,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
-    "test": "node --experimental-strip-types --no-warnings --test test/canonical.test.ts test/kernel.test.ts test/store-conformance.test.ts test/guard.test.ts test/capabilities.test.ts test/readme.test.ts test/once-audit-cli.test.ts test/door.test.ts",
+    "test": "node --experimental-strip-types --no-warnings --test test/canonical.test.ts test/kernel.test.ts test/store-conformance.test.ts test/guard.test.ts test/capabilities.test.ts test/readme.test.ts test/once-audit-cli.test.ts test/door.test.ts test/ledger.test.ts",
     "test:storm": "node --experimental-strip-types --no-warnings --test test/storm.test.ts",
     "test:all": "npm run test && npm run test:storm",
     "prepublishOnly": "npm run clean && npm run build && npm run test:all"
