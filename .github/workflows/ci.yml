@@ -71,4 +71,8 @@ jobs:
               print("committed vectors differ from live Python output"); sys.exit(1)
           print(f"{len(a)} vectors match the live Python kernel")
           PY
+      # `npm test` builds first (see the `pretest` script). The CLI tests drive
+      # bin/once-audit.js, which imports from dist/ — without a build this job
+      # failed 12 tests on ERR_MODULE_NOT_FOUND while the other jobs, which do
+      # build, stayed green.
       - run: npm test
