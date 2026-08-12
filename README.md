@@ -330,7 +330,7 @@ worker that wakes up after losing its lease gets `false` and changes nothing.
 | `IdempotencyConflict` | Same key, different payload. A caller bug — don't retry blindly. |
 | `InProgressError` | Another caller holds the key. `run()` waits for you. |
 | `WaitTimeout` | Waited past `waitTimeoutMs` for an in-flight call to settle. |
-| `ResultTooLarge` | Over `maxResultBytes`. Store it elsewhere, keep a reference. |
+| `ResultTooLarge` | Over `maxResultBytes`. Store it elsewhere, keep a reference. From `run()` the effect already ran, so the attempt is recorded as a **terminal** failure — retry under a new key, never the same one. |
 | `CanonicalizationError` | Payload holds something JSON can't represent (`NaN`, `undefined`, `Date`, `BigInt`). Rejected rather than coerced — coercion is how two payloads collide into one hash. |
 | `BudgetExceeded` | The spend ceiling refused the call. Says what, how much, and when it frees up. |
 

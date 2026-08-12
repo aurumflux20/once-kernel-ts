@@ -145,6 +145,35 @@ test("an oversized result is refused rather than silently stored", async () => {
   );
 });
 
+test("a result that cannot be stored must not let the effect run twice", async () => {
+  // The commit leg failed AFTER the effect fired. Refusing the result is
+  // correct; freeing the key afterwards is not — the next caller then fires a
+  // side effect that ALREADY HAPPENED. Exactly-once has to survive its own
+  // commit failing.
+  const once = new Once({ maxResultBytes: 100 });
+  let calls = 0;
+  const effect = async () => {
+    calls++;
+    return "x".repeat(500);
+  };
+
+  await assert.rejects(
+    () => once.run("commit:oversized", { amount: 49 }, effect),
+    ResultTooLarge,
+  );
+  assert.equal(calls, 1);
+
+  await assert.rejects(
+    () => once.run("commit:oversized", { amount: 49 }, effect),
+    /could not be stored/,
+  );
+  assert.equal(
+    calls,
+    1,
+    `side effect ran ${calls}× after a failed commit — duplicate execution`,
+  );
+});
+
 test("keys are validated", async () => {
   const once = new Once();
   await assert.rejects(() => once.run("   ", {}, async () => 1), /non-empty/);

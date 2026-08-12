@@ -145,6 +145,11 @@ export interface Store {
 
 const now = () => Date.now() / 1000;
 
+/** Message text for anything thrown — `catch` gives `unknown`, not `Error`. */
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 function isExpired(r: Record_, t = now()): boolean {
   return r.expiresAt !== undefined && t >= r.expiresAt;
 }
@@ -399,17 +404,63 @@ export class Once {
         return out.record.result as T;
       }
 
+      // The effect and the commit are handled separately ON PURPOSE. They fail
+      // for opposite reasons and need opposite recoveries: an effect that did
+      // not happen should be retryable, an effect that DID happen must never
+      // be retryable just because we could not write down what it returned.
+      let result: T;
       try {
-        const result = await fn();
-        await this.complete(key, out.record.fenceToken, result, opts.ttlSec);
-        return result;
+        result = await fn();
       } catch (e) {
-        // Free the key so the same payload can be retried; then surface the
-        // real error. Swallowing it here would hide a genuine failure behind
-        // an idempotency concern.
-        await this.fail(key, out.record.fenceToken, e instanceof Error ? e.message : String(e), true);
+        // Nothing happened (or it failed): free the key so the same payload
+        // can be retried; then surface the real error. Swallowing it here
+        // would hide a genuine failure behind an idempotency concern.
+        await this.#bestEffortFail(key, out.record.fenceToken, errText(e), true);
         throw e;
       }
+
+      try {
+        await this.complete(key, out.record.fenceToken, result, opts.ttlSec);
+      } catch (e) {
+        // The effect ALREADY RAN. Freeing the key here — which is what this
+        // used to do — lets the very next caller fire it a second time, the
+        // one outcome this library exists to prevent. An oversized result
+        // reaches this path, and so does any store that refuses a value at
+        // write time.
+        //
+        // So an unrecordable commit is terminal, not retryable: later callers
+        // replay the failure instead of re-executing, and the caller still
+        // sees the original error. Recovering means a NEW idempotency key,
+        // because deciding whether an effect that already happened should
+        // happen again belongs to the caller, not to a lease timeout.
+        await this.#bestEffortFail(
+          key,
+          out.record.fenceToken,
+          `once: effect executed but result could not be stored: ${errText(e)}`,
+          false,
+        );
+        throw e;
+      }
+      return result;
+    }
+  }
+
+  /**
+   * Release or terminate a reservation while another error is already in
+   * flight. Never throws: a zombie worker's CAS legitimately fails because it
+   * is fenced out, and letting that surface would replace the caller's real
+   * error with a bookkeeping one.
+   */
+  async #bestEffortFail(
+    key: string,
+    fenceToken: string,
+    error: string,
+    allowRetry: boolean,
+  ): Promise<boolean> {
+    try {
+      return await this.fail(key, fenceToken, error, allowRetry);
+    } catch {
+      return false;
     }
   }
 }
