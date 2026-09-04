@@ -1,7 +1,7 @@
 {
   "name": "once-kernel",
-  "version": "0.6.0",
-  "description": "Idempotency kernel for side-effecting operations. 1,000 racing callers, exactly one execution — proven, not asserted.",
+  "version": "0.6.1",
+  "description": "Idempotency kernel for side-effecting operations. 1,000 racing callers, exactly one execution \u2014 proven, not asserted.",
   "keywords": [
     "idempotency",
     "idempotent",
