@@ -2,6 +2,10 @@
 
 **Stop side effects happening twice — and find the ones that already did.**
 
+> Maintained by the people who run the public [**Retry-Safety Index**](https://aurumflux.co/retry-safety/) — the register of which payment and agent code charges once when the answer is lost, and which charges twice. Seven teams have shipped fixes from our reports; the fastest took 4.3 hours.
+>
+> **[Get your own money path read — free](https://github.com/aurumflux20/hostile-facilitator/issues/new?template=submit.yml)** · no payment, no account.
+
 ```bash
 npm install once-kernel
 ```
@@ -386,3 +390,26 @@ that already moves money, email **hello@aurumflux.co** —
 ## Licence
 
 Apache-2.0
+
+---
+
+## If you're using this because something already went wrong
+
+`once-kernel` stops the duplicate at the point you wrap. It cannot tell you where
+*else* in your codebase the same mistake is waiting — that takes reading the path.
+
+**Free.** Submit any client, SDK, facilitator or toolkit that moves money — yours or
+someone else's — and we read it and publish a verdict on the
+[Retry-Safety Index](https://aurumflux.co/retry-safety/) at no cost. If we find
+something you get the mechanism, the file and line, and a failing test. You are
+counted, never named, until you ship a fix; when you do, the row goes up with credit
+and your time-to-fix as the headline.
+→ **[Submit for grading](https://github.com/aurumflux20/hostile-facilitator/issues/new?template=submit.yml)**
+
+**Paid, and only this.** A Retry-Safety Review: one money path read end to end, every
+finding tied to your own file and line numbers, each with its fix and a failing test in
+your own harness. Five working days, written only, no call. **$1,200 — and no invoice
+if the path is clean**, in which case you keep the report saying your guards hold.
+→ **[Book it](https://buy.stripe.com/28E7sL91C9naapQbBVdIA0l)** · the deliverable is
+[specified up front](https://github.com/aurumflux20/seal/blob/main/docs/REVIEW-DELIVERABLE.md)
+so you can check the report you get against it.
